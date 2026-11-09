@@ -1751,6 +1751,53 @@ template <class BinaryOperation>
 inline constexpr bool is_binary_op_supported_v =
     is_binary_op_supported<BinaryOperation>::value;
 
+/// Pointer traits. Portability replacement for \`sycl::detail::is_pointer\` /
+/// \`sycl::detail::remove_pointer_t\` that follow the SYCL 2020 specification:
+/// In addition to raw pointers, \`sycl::multi_ptr\` also counts as a pointer
+/// type for the joint group functions (see e.g. Intel's implementation of
+/// these traits in sycl::detail::type_traits.hpp).
+
+/// is_pointer trait for raw pointers and sycl::multi_ptr
+
+template <typename T> struct is_pointer_impl : std::false_type {};
+template <typename ElemT> struct is_pointer_impl<ElemT *> : std::true_type {};
+template <typename ElemT, sycl::access::address_space Space,
+          sycl::access::decorated DecorateAddress>
+struct is_pointer_impl<sycl::multi_ptr<ElemT, Space, DecorateAddress>>
+    : std::true_type {};
+template <typename T>
+struct is_pointer : is_pointer_impl<std::remove_cv_t<T>> {};
+template <typename T> inline constexpr bool is_pointer_v = is_pointer<T>::value;
+
+/// remove_pointer trait for raw pointers and sycl::multi_ptr
+template <typename T> struct remove_pointer_impl {
+  using type = T;
+};
+template <typename ElemT> struct remove_pointer_impl<ElemT *> {
+  using type = ElemT;
+};
+template <typename ElemT, sycl::access::address_space Space,
+          sycl::access::decorated DecorateAddress>
+struct remove_pointer_impl<sycl::multi_ptr<ElemT, Space, DecorateAddress>> {
+  using type = ElemT;
+};
+template <typename T>
+struct remove_pointer : remove_pointer_impl<std::remove_cv_t<T>> {};
+template <typename T> using remove_pointer_t = typename remove_pointer<T>::type;
+
+/// Distance between the two iterators. Unlike raw pointers,
+/// sycl::multi_ptr does not provide a ptr - ptr operator.
+template <typename T> inline std::ptrdiff_t ptr_distance(T first, T last) {
+  return last - first;
+}
+template <typename ElemT, sycl::access::address_space Space,
+          sycl::access::decorated DecorateAddress>
+inline std::ptrdiff_t
+ptr_distance(sycl::multi_ptr<ElemT, Space, DecorateAddress> first,
+             sycl::multi_ptr<ElemT, Space, DecorateAddress> last) {
+  return last.get() - first.get();
+}
+
 /// Helper functions to get the init for sycl::plus binary operation when the
 /// type is a gencomplex
 template <typename T, class BinaryOperation>
@@ -1834,8 +1881,8 @@ sycl::marray<T, N> reduce_over_group(Group g, sycl::marray<V, N> x,
 template <typename Group, typename T, class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              (is_gencomplex_v<T> || is_mgencomplex_v<T>)&&cplex::detail::
-                  is_binary_op_supported_v<BinaryOperation>>>
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 T reduce_over_group(Group g, T x, BinaryOperation binary_op) {
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
@@ -1848,21 +1895,24 @@ T reduce_over_group(Group g, T x, BinaryOperation binary_op) {
 template <typename Group, typename Ptr, typename T, class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              sycl::detail::is_pointer<Ptr>::value &&
-              (is_gencomplex_v<sycl::detail::remove_pointer_t<Ptr>> ||
-               is_mgencomplex_v<sycl::detail::remove_pointer_t<
-                   Ptr>>)&&(is_gencomplex_v<T> || is_mgencomplex_v<T>)&&cplex::
-                  detail::is_binary_op_supported_v<BinaryOperation>>>
+              cplex::detail::is_pointer<Ptr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<Ptr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<Ptr>>>) &&
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 T joint_reduce(Group g, Ptr first, Ptr last, T init,
                BinaryOperation binary_op) {
 
   auto partial = cplex::detail::get_init<T, BinaryOperation>();
 
-  sycl::detail::for_each(
-      g, first, last,
-      [&](const typename sycl::detail::remove_pointer<Ptr>::type &x) {
-        partial = binary_op(partial, x);
-      });
+  // TODO: This "fix" looks suspicious... is first really always contiguous?
+  const std::ptrdiff_t N = cplex::detail::ptr_distance(first, last);
+  for (std::ptrdiff_t i = g.get_local_linear_id(); i < N;
+       i += g.get_local_linear_range()) {
+    partial = binary_op(partial, first[i]);
+  }
 
   return reduce_over_group(g, partial, init, binary_op);
 }
@@ -1871,14 +1921,16 @@ T joint_reduce(Group g, Ptr first, Ptr last, T init,
 template <typename Group, typename Ptr, class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              sycl::detail::is_pointer<Ptr>::value &&
-              (is_gencomplex_v<sycl::detail::remove_pointer_t<Ptr>> ||
-               is_mgencomplex_v<sycl::detail::remove_pointer_t<Ptr>>)&&cplex::
-                  detail::is_binary_op_supported_v<BinaryOperation>>>
-typename sycl::detail::remove_pointer_t<Ptr>
+              cplex::detail::is_pointer<Ptr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<Ptr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<Ptr>>>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
+typename cplex::detail::remove_pointer_t<Ptr>
 joint_reduce(Group g, Ptr first, Ptr last, BinaryOperation binary_op) {
 
-  using T = typename sycl::detail::remove_pointer_t<Ptr>;
+  using T = typename cplex::detail::remove_pointer_t<Ptr>;
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
@@ -1929,8 +1981,8 @@ sycl::marray<T, N> inclusive_scan_over_group(Group g, sycl::marray<V, N> x,
 template <typename Group, typename T, class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              (is_gencomplex_v<T> || is_mgencomplex_v<T>)&&cplex::detail::
-                  is_binary_op_supported_v<BinaryOperation>>>
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 T inclusive_scan_over_group(Group g, T x, BinaryOperation binary_op) {
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
@@ -1944,31 +1996,33 @@ template <typename Group, typename InPtr, typename OutPtr,
           class BinaryOperation, typename T,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              sycl::detail::is_pointer<InPtr>::value &&
-              sycl::detail::is_pointer<OutPtr>::value &&
-              (is_gencomplex_v<sycl::detail::remove_pointer_t<InPtr>> ||
-               is_mgencomplex_v<sycl::detail::remove_pointer_t<
-                   InPtr>>)&&(is_gencomplex_v<sycl::detail::
-                                                  remove_pointer_t<OutPtr>> ||
-                              is_mgencomplex_v<sycl::detail::remove_pointer_t<
-                                  OutPtr>>)&&(is_gencomplex_v<T> ||
-                                              is_mgencomplex_v<T>)&&cplex::
-                  detail::is_binary_op_supported_v<BinaryOperation>>>
+              cplex::detail::is_pointer<InPtr>::value &&
+              cplex::detail::is_pointer<OutPtr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>>) &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<OutPtr>>> ||
+               is_mgencomplex_v<std::remove_cv_t<
+                   cplex::detail::remove_pointer_t<OutPtr>>>) &&
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 OutPtr joint_inclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
                             BinaryOperation binary_op, T init) {
 
   std::ptrdiff_t offset = g.get_local_linear_id();
   std::ptrdiff_t stride = g.get_local_linear_range();
-  std::ptrdiff_t N = last - first;
+  std::ptrdiff_t N = cplex::detail::ptr_distance(first, last);
 
   auto roundup = [=](const std::ptrdiff_t &v,
                      const std::ptrdiff_t &divisor) -> std::ptrdiff_t {
     return ((v + divisor - 1) / divisor) * divisor;
   };
 
-  typename std::remove_const_t<typename sycl::detail::remove_pointer_t<InPtr>>
+  typename std::remove_const_t<typename cplex::detail::remove_pointer_t<InPtr>>
       x;
-  typename sycl::detail::remove_pointer_t<OutPtr> carry = init;
+  typename cplex::detail::remove_pointer_t<OutPtr> carry = init;
 
   for (std::ptrdiff_t chunk = 0; chunk < roundup(N, stride); chunk += stride) {
     std::ptrdiff_t i = chunk + offset;
@@ -1976,7 +2030,7 @@ OutPtr joint_inclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
     if (i < N)
       x = first[i];
 
-    typename sycl::detail::remove_pointer_t<OutPtr> out =
+    typename cplex::detail::remove_pointer_t<OutPtr> out =
         inclusive_scan_over_group(g, x, binary_op, carry);
 
     if (i < N)
@@ -1988,22 +2042,23 @@ OutPtr joint_inclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
 }
 
 /// Complex specialization
-template <
-    typename Group, typename InPtr, typename OutPtr, class BinaryOperation,
-    typename = std::enable_if_t<
-        sycl::is_group_v<std::decay_t<Group>> &&
-        sycl::detail::is_pointer<InPtr>::value &&
-        sycl::detail::is_pointer<OutPtr>::value &&
-        (is_gencomplex_v<sycl::detail::remove_pointer_t<InPtr>> ||
-         is_mgencomplex_v<sycl::detail::remove_pointer_t<
-             InPtr>>)&&(is_gencomplex_v<sycl::detail::
-                                            remove_pointer_t<OutPtr>> ||
-                        is_mgencomplex_v<
-                            sycl::detail::remove_pointer_t<OutPtr>>)&&cplex::
-            detail::is_binary_op_supported_v<BinaryOperation>>>
+template <typename Group, typename InPtr, typename OutPtr,
+          class BinaryOperation,
+          typename = std::enable_if_t<
+              sycl::is_group_v<std::decay_t<Group>> &&
+              cplex::detail::is_pointer<InPtr>::value &&
+              cplex::detail::is_pointer<OutPtr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>>) &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<OutPtr>>> ||
+               is_mgencomplex_v<cplex::detail::remove_pointer_t<OutPtr>>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 OutPtr joint_inclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
                             BinaryOperation binary_op) {
-  using T = typename sycl::detail::remove_pointer_t<InPtr>;
+  using T = typename cplex::detail::remove_pointer_t<InPtr>;
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
@@ -2053,8 +2108,8 @@ sycl::marray<T, N> exclusive_scan_over_group(Group g, sycl::marray<V, N> x,
 template <typename Group, typename T, class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              (is_gencomplex_v<T> || is_mgencomplex_v<T>)&&cplex::detail::
-                  is_binary_op_supported_v<BinaryOperation>>>
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 T exclusive_scan_over_group(Group g, T x, BinaryOperation binary_op) {
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
@@ -2068,38 +2123,40 @@ template <typename Group, typename InPtr, typename OutPtr, typename T,
           class BinaryOperation,
           typename = std::enable_if_t<
               sycl::is_group_v<std::decay_t<Group>> &&
-              sycl::detail::is_pointer<InPtr>::value &&
-              sycl::detail::is_pointer<OutPtr>::value &&
-              (is_gencomplex_v<sycl::detail::remove_pointer_t<InPtr>> ||
-               is_mgencomplex_v<sycl::detail::remove_pointer_t<
-                   InPtr>>)&&(is_gencomplex_v<sycl::detail::
-                                                  remove_pointer_t<OutPtr>> ||
-                              is_mgencomplex_v<sycl::detail::remove_pointer_t<
-                                  OutPtr>>)&&(is_gencomplex_v<T> ||
-                                              is_mgencomplex_v<T>)&&
+              cplex::detail::is_pointer<InPtr>::value &&
+              cplex::detail::is_pointer<OutPtr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>>) &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<OutPtr>>> ||
+               is_mgencomplex_v<std::remove_cv_t<
+                   cplex::detail::remove_pointer_t<OutPtr>>>) &&
+              (is_gencomplex_v<T> || is_mgencomplex_v<T>) &&
               //
               cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 OutPtr joint_exclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
                             T init, BinaryOperation binary_op) {
   std::ptrdiff_t offset = g.get_local_linear_id();
   std::ptrdiff_t stride = g.get_local_linear_range();
-  std::ptrdiff_t N = last - first;
+  std::ptrdiff_t N = cplex::detail::ptr_distance(first, last);
 
   auto roundup = [=](const std::ptrdiff_t &v,
                      const std::ptrdiff_t &divisor) -> std::ptrdiff_t {
     return ((v + divisor - 1) / divisor) * divisor;
   };
 
-  typename std::remove_const_t<typename sycl::detail::remove_pointer_t<InPtr>>
+  typename std::remove_const_t<typename cplex::detail::remove_pointer_t<InPtr>>
       x;
-  typename sycl::detail::remove_pointer_t<OutPtr> carry = init;
+  typename cplex::detail::remove_pointer_t<OutPtr> carry = init;
 
   for (std::ptrdiff_t chunk = 0; chunk < roundup(N, stride); chunk += stride) {
     std::ptrdiff_t i = chunk + offset;
     if (i < N)
       x = first[i];
 
-    typename sycl::detail::remove_pointer_t<OutPtr> out =
+    typename cplex::detail::remove_pointer_t<OutPtr> out =
         exclusive_scan_over_group(g, x, carry, binary_op);
 
     if (i < N)
@@ -2111,22 +2168,23 @@ OutPtr joint_exclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
 }
 
 /// Complex specialization
-template <
-    typename Group, typename InPtr, typename OutPtr, class BinaryOperation,
-    typename = std::enable_if_t<
-        sycl::is_group_v<std::decay_t<Group>> &&
-        sycl::detail::is_pointer<InPtr>::value &&
-        sycl::detail::is_pointer<OutPtr>::value &&
-        (is_gencomplex_v<sycl::detail::remove_pointer_t<InPtr>> ||
-         is_mgencomplex_v<sycl::detail::remove_pointer_t<
-             InPtr>>)&&(is_gencomplex_v<sycl::detail::
-                                            remove_pointer_t<OutPtr>> ||
-                        is_mgencomplex_v<
-                            sycl::detail::remove_pointer_t<OutPtr>>)&&cplex::
-            detail::is_binary_op_supported_v<BinaryOperation>>>
+template <typename Group, typename InPtr, typename OutPtr,
+          class BinaryOperation,
+          typename = std::enable_if_t<
+              sycl::is_group_v<std::decay_t<Group>> &&
+              cplex::detail::is_pointer<InPtr>::value &&
+              cplex::detail::is_pointer<OutPtr>::value &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>> ||
+               is_mgencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<InPtr>>>) &&
+              (is_gencomplex_v<
+                   std::remove_cv_t<cplex::detail::remove_pointer_t<OutPtr>>> ||
+               is_mgencomplex_v<cplex::detail::remove_pointer_t<OutPtr>>) &&
+              cplex::detail::is_binary_op_supported_v<BinaryOperation>>>
 OutPtr joint_exclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
                             BinaryOperation binary_op) {
-  using T = typename sycl::detail::remove_pointer_t<InPtr>;
+  using T = typename cplex::detail::remove_pointer_t<InPtr>;
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 

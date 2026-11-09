@@ -59,7 +59,8 @@ template <typename T> struct cmplx {
 // oneAPI define `__INTEL_LLVM_COMPILER` but `intel/llvm` doesn't.
 // So we use the intel-implementation-only macro `__SYCL_COMPILER_VERSION` as an
 // ID
-#ifndef __SYCL_COMPILER_VERSION
+// AdaptiveCpp also defines numeric_limits<sycl::half> now.
+#if !defined(__SYCL_COMPILER_VERSION) && !defined(__ACPP__)
 namespace std {
 
 // Specialization of std::numeric<sycl::half> for almost_equal
@@ -123,18 +124,19 @@ template <typename T_in> auto constexpr init_std_complex(cmplx<T_in> c) {
   return std::complex<T_in>(c.re, c.im);
 }
 
-template <> auto constexpr init_std_complex(cmplx<sycl::half> c) {
+// constexpr does not work with AdaptiveCpp here, requires upstream fix
+template <> auto /*constexpr*/ init_std_complex(cmplx<sycl::half> c) {
   return detail::trunc_float(std::complex<float>(c.re, c.im));
 }
 
 template <typename T_in, std::size_t NumElements>
-auto constexpr init_std_complex(
+auto /*constexpr*/ init_std_complex(
     sycl::marray<std::complex<T_in>, NumElements> input) {
   return input;
 }
 
 template <std::size_t NumElements>
-auto constexpr init_std_complex(
+auto /*constexpr*/ init_std_complex(
     sycl::marray<std::complex<sycl::half>, NumElements> input) {
   sycl::marray<std::complex<float>, NumElements> rtn;
   for (std::size_t i = 0; i < rtn.size(); ++i) {
@@ -146,12 +148,12 @@ auto constexpr init_std_complex(
 
 template <typename T_in> auto constexpr init_deci(T_in re) { return re; }
 
-template <> auto constexpr init_deci(sycl::half re) {
+template <> auto /*constexpr*/ init_deci(sycl::half re) {
   return static_cast<float>(re);
 }
 
 template <std::size_t NumElements>
-auto constexpr init_deci(sycl::marray<sycl::half, NumElements> re) {
+auto /*constexpr*/ init_deci(sycl::marray<sycl::half, NumElements> re) {
   sycl::marray<float, NumElements> rtn;
   for (std::size_t i = 0; i < NumElements; ++i)
     rtn[i] = static_cast<float>(re[i]);
