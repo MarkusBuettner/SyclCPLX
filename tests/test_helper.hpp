@@ -209,6 +209,9 @@ check_results(LHS output, RHS reference, int tol_multiplier = 1) {
          "but with the same value_type");
   }
 
+  CAPTURE(output);
+  CAPTURE(reference);
+
   CHECK(detail::almost_equal(static_cast<std::complex<T1>>(output),
                              static_cast<std::complex<T2>>(reference),
                              tol_multiplier * SYCL_CPLX_TOL_ULP));

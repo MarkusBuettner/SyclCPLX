@@ -84,7 +84,7 @@ TEMPLATE_TEST_CASE_SIG("Test complex inclusive_scan_over_group", "[scan]",
   using Complex = typename sycl::ext::cplx::complex<T>;
   using Array = typename std::array<Complex, N>;
 
-  sycl::queue q;
+  sycl::queue q{sycl::property::queue::in_order{}};
 
   const auto test_cases = GENERATE(
       // Basic value test
@@ -128,7 +128,7 @@ TEMPLATE_TEST_CASE_SIG("Test marray<complex> inclusive_scan_over_group",
   using Marray = typename sycl::marray<Complex, N>;
   using Array = typename std::array<Marray, N>;
 
-  sycl::queue q;
+  sycl::queue q{sycl::property::queue::in_order{}};
 
   const auto test_cases = GENERATE(
       // Basic value test

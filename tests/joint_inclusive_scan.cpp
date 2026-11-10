@@ -8,7 +8,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename T, typename BinaryOperation>
-void test_joint_inclusive_scan(sycl::queue q, T input,
+void test_joint_inclusive_scan(sycl::queue& q, T input,
                                BinaryOperation binary_op) {
   using V = typename T::value_type;
 
@@ -84,7 +84,7 @@ TEMPLATE_TEST_CASE_SIG("Test complex joint_inclusive_scan", "[scan]",
   using Complex = typename sycl::ext::cplx::complex<T>;
   using Array = typename std::array<Complex, N>;
 
-  sycl::queue q;
+  sycl::queue q{sycl::property::queue::in_order{}};
 
   const auto test_cases = GENERATE(
       // Basic value test

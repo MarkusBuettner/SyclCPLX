@@ -117,6 +117,9 @@ TEMPLATE_TEST_CASE("Test complex pow cplx<T>-cplx<U> overload", "[pow]",
   using std_in1T = decltype(std_in1);
   using std_in2T = decltype(std_in2);
 
+  CAPTURE(std_in1);
+  CAPTURE(std_in2);
+
   // Get std::complex output
   std_out = detail::std_pow(std_in1, std_in2);
 

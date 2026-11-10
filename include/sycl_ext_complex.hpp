@@ -1934,7 +1934,7 @@ joint_reduce(Group g, Ptr first, Ptr last, BinaryOperation binary_op) {
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
-  return joint_reduce(g, first, last, init, binary_op);
+  return _SYCL_CPLX_NAMESPACE::joint_reduce(g, first, last, init, binary_op);
 }
 
 /* INCLUSIVE_SCAN_OVER_GROUP'S OVERLOADS */
@@ -2062,7 +2062,7 @@ OutPtr joint_inclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
-  return joint_inclusive_scan(g, first, last, result, binary_op, init);
+  return _SYCL_CPLX_NAMESPACE::joint_inclusive_scan(g, first, last, result, binary_op, init);
 }
 
 /* EXCLUSIVE_SCAN_OVER_GROUP'S OVERLOADS */
@@ -2188,7 +2188,7 @@ OutPtr joint_exclusive_scan(Group g, InPtr first, InPtr last, OutPtr result,
 
   auto init = cplex::detail::get_init<T, BinaryOperation>();
 
-  return joint_exclusive_scan(g, first, last, result, init, binary_op);
+  return _SYCL_CPLX_NAMESPACE::joint_exclusive_scan(g, first, last, result, init, binary_op);
 }
 
 _SYCL_EXT_CPLX_END_NAMESPACE_STD
