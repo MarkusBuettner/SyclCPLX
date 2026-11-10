@@ -12,6 +12,8 @@ void test_joint_inclusive_scan(sycl::queue& q, T input,
                                BinaryOperation binary_op) {
   using V = typename T::value_type;
 
+  CAPTURE(input);
+
   constexpr size_t N = input.size();
 
   auto init = sycl::ext::cplx::cplex::detail::get_init<V, BinaryOperation>();
@@ -41,8 +43,8 @@ void test_joint_inclusive_scan(sycl::queue& q, T input,
                                             d_output_without_init, binary_op);
     });
   });
-  q.copy(h_output_with_init, d_output_with_init, N);
-  q.copy(h_output_without_init, d_output_without_init, N);
+  q.copy(d_output_with_init, h_output_with_init, N);
+  q.copy(d_output_without_init, h_output_without_init, N);
 
   q.wait();
 
@@ -126,7 +128,7 @@ TEMPLATE_TEST_CASE_SIG("Test marray<complex> joint_inclusive_scan", "[scan]",
   using Marray = typename sycl::marray<Complex, N>;
   using Array = typename std::array<Marray, N>;
 
-  sycl::queue q;
+  sycl::queue q{sycl::property::queue::in_order{}};
 
   const auto test_cases = GENERATE(
       // Basic value test
